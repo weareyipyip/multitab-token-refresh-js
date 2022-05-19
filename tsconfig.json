@@ -1,0 +1,17 @@
+// https://github.com/microsoft/TypeScript/wiki/Node-Target-Mapping
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "lib": ["ES2019"],
+    "module": "commonjs",
+    "target": "ES2019",
+
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}
