@@ -16,7 +16,10 @@ We use Axios as an HTTP client in the example.
 ```javascript
 // ApiService.js
 import Axios from "axios";
-import { TokenService } from "@weareyipyip/multitab-token-refresh";
+import {
+  TokenService,
+  axiosAuthRequestInterceptor,
+} from "@weareyipyip/multitab-token-refresh";
 
 // ApiClient will be used for requests that don't require an access token
 const ApiClient = Axios.create();
@@ -63,13 +66,7 @@ TokenService.setRefreshCallback((refreshToken) => {
 
 // AuthApiClient will be used for all requests that require an access token
 const AuthApiClient = Axios.create();
-
-// request interceptor for authentication
-AuthApiClient.interceptors.request.use(async (config) => {
-  const token = await TokenService.getAccessToken();
-  config.headers.authorization = `Bearer ${token}`;
-  return config;
-});
+AuthApiClient.interceptors.request.use(axiosAuthRequestInterceptor);
 
 // now you're good to go
 AuthApiClient.get("/very_secure_endpoint");
