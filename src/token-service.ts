@@ -1,8 +1,8 @@
 "use strict";
-/* eslint-disable no-console */
 import { BroadcastChannel, createLeaderElection } from "broadcast-channel";
+import storage from "./storage";
 
-type refreshCallback = (refreshToken: string) => Promise<void>;
+type refreshCallback = (refreshToken: string) => Promise<any>;
 type newTokens = {
   accessToken: string;
   accessTokenExp: number;
@@ -39,7 +39,7 @@ let fallbackAccessTokenPromiseRejecter: (error: Error) => void;
 let fallbackAccessTokenPromise: Promise<string>;
 let refreshTimer: any = null;
 let currentStatus: status = BASE_STATUS;
-let currentStatusJSON: string = "";
+let currentStatusJSON: string = JSON.stringify(BASE_STATUS);
 let refreshCallbackPromiseResolver: (refreshCallback: refreshCallback) => void;
 let refreshCallbackPromise: Promise<refreshCallback> = new Promise(function (
   resolve,
@@ -56,10 +56,8 @@ const statusSubscribers: Array<subscriber> = [];
 renewInitialAccessTokenPromise();
 
 // set the initial local status
-updateLocalStatus(
-  JSON.parse(localStorage.getItem(LOCAL_STORAGE_STATUS_KEY) || "") ||
-    currentStatus
-);
+const storedStatus = storage.getItem(LOCAL_STORAGE_STATUS_KEY) || "{}";
+updateLocalStatus(JSON.parse(storedStatus) || currentStatus);
 
 // register message handler
 authChannel.onmessage = (msg) => {
@@ -122,7 +120,7 @@ function updateLocalStatus(newTokens: newTokens) {
   if (newStatusJSON !== currentStatusJSON) {
     currentStatus = newStatus;
     currentStatusJSON = newStatusJSON;
-    localStorage.setItem(LOCAL_STORAGE_STATUS_KEY, currentStatusJSON);
+    storage.setItem(LOCAL_STORAGE_STATUS_KEY, currentStatusJSON);
     notifyStatusUpdate();
   }
 }
@@ -141,7 +139,7 @@ function handleStatusChangeMessage(message: string) {
   const [, newStatusJSON] = message.split(" : ");
   if (currentStatusJSON !== newStatusJSON) {
     console.log("Received status update from peer tab");
-    const status = JSON.parse(newStatusJSON);
+    const status = JSON.parse(newStatusJSON || "{}");
     updateLocalStatus(status);
     fallbackAccessTokenPromiseResolver(status.accessToken);
     scheduleRefreshIfLeader();
@@ -155,7 +153,7 @@ function handleStatusChangeMessage(message: string) {
 function handleLogoutMessage() {
   console.log("Received logout message from peer tab, logging out.");
   clearTimeout(refreshTimer);
-  localStorage.removeItem(LOCAL_STORAGE_STATUS_KEY);
+  storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
   fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
   renewInitialAccessTokenPromise();
@@ -177,13 +175,14 @@ function scheduleRefreshIfLeader() {
     refreshTimer = setTimeout(() => {
       console.log("Refreshing session / tokens...");
       refreshCallbackPromise.then((refreshCallback) => {
-        refreshCallback(currentStatus.refreshToken || "").catch((error) =>
+        refreshCallback(currentStatus.refreshToken || "").catch((error) => {
           console.log(
             `Refresh failed ${
               error.response ? ": " + JSON.stringify(error.response) : ""
             }`
-          )
-        );
+          );
+          throw error;
+        });
       });
     }, Math.floor(accessTTL * 1000));
   }
@@ -241,7 +240,7 @@ async function updateStatus(newTokens: newTokens) {
  */
 function setLoggedOut() {
   clearTimeout(refreshTimer);
-  localStorage.removeItem(LOCAL_STORAGE_STATUS_KEY);
+  storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
   fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
   renewInitialAccessTokenPromise();
