@@ -172,20 +172,23 @@ function scheduleRefreshIfLeader() {
   if (elector.isLeader && currentStatus.loggedIn) {
     const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - 5);
     console.log(`Refresh scheduled in ${accessTTL} seconds`);
-    refreshTimer = setTimeout(() => {
-      console.log("Refreshing session / tokens...");
-      refreshCallbackPromise.then((refreshCallback) => {
-        refreshCallback(currentStatus.refreshToken || "").catch((error) => {
-          console.log(
-            `Refresh failed ${
-              error.response ? ": " + JSON.stringify(error.response) : ""
-            }`
-          );
-          throw error;
-        });
-      });
-    }, Math.floor(accessTTL * 1000));
+    refreshTimer = setTimeout(refreshNow, Math.floor(accessTTL * 1000));
   }
+}
+
+/**
+ * Refresh now.
+ */
+function refreshNow() {
+  console.log("Refreshing session / tokens...");
+  return refreshCallbackPromise.then((refreshCallback) => {
+    return refreshCallback(currentStatus.refreshToken || "").catch((error) => {
+      let response = error.response;
+      response = response ? `: ${JSON.stringify(response)}` : "";
+      console.log(`Refresh failed${response}`);
+      throw error;
+    });
+  });
 }
 
 /////////////////////////
@@ -207,6 +210,9 @@ function ttl(timestamp: number) {
  * Returns a promise that will resolve to the access token.
  */
 async function getAccessToken() {
+  if (ttl(currentStatus.accessTokenExp) < 2) {
+    await refreshNow();
+  }
   return currentStatus.accessToken || fallbackAccessTokenPromise;
 }
 
