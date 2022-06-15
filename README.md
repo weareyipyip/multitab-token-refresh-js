@@ -82,7 +82,7 @@ import {
   fromJwt,
 } from "@weareyipyip/multitab-token-refresh";
 
-TokenService.updateStatus(fromJwt(acccessToken, refreshToken));
+TokenService.updateStatus(fromJwt({ acccessToken, refreshToken }));
 ```
 
 ## Integrate with Vuex
