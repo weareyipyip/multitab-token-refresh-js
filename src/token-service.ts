@@ -2,6 +2,7 @@
 import { BroadcastChannel, createLeaderElection } from "broadcast-channel";
 import storage from "./storage";
 import { Tokens } from "./tokens";
+import { Timer } from "./timer";
 
 type refreshCallback = (refreshToken: string) => Promise<any>;
 type status = {
@@ -32,7 +33,7 @@ const elector = createLeaderElection(authChannel);
 let fallbackAccessTokenPromiseResolver: (accessToken: string) => void;
 let fallbackAccessTokenPromiseRejecter: (error: Error) => void;
 let fallbackAccessTokenPromise: Promise<string>;
-let refreshTimer: any = null;
+let refreshTimer: Timer | null = null;
 let currentStatus: status = BASE_STATUS;
 let currentStatusJSON: string = JSON.stringify(BASE_STATUS);
 let refreshCallbackPromiseResolver: (refreshCallback: refreshCallback) => void;
@@ -147,7 +148,7 @@ function handleStatusChangeMessage(message: string) {
  */
 function handleLogoutMessage() {
   console.log("Received logout message from peer tab, logging out.");
-  clearTimeout(refreshTimer);
+  refreshTimer?.cancel();
   storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
   fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
@@ -163,11 +164,11 @@ function handleLogoutMessage() {
  * The refresh is scheduled 5 seconds before the access token expires.
  */
 function scheduleRefreshIfLeader() {
-  clearTimeout(refreshTimer);
+  refreshTimer?.cancel();
   if (elector.isLeader && currentStatus.loggedIn) {
     const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - 5);
     console.log(`Refresh scheduled in ${accessTTL} seconds`);
-    refreshTimer = setTimeout(() => {
+    refreshTimer = new Timer(() => {
       console.log("Refreshing session / tokens...");
       refreshCallbackPromise.then((refreshCallback) => {
         refreshCallback(currentStatus.refreshToken || "").catch((error) => {
@@ -234,7 +235,7 @@ async function updateStatus(newTokens: Tokens) {
  * Logout this tab, cancel scheduled refreshes and notify peer tabs.
  */
 function setLoggedOut() {
-  clearTimeout(refreshTimer);
+  refreshTimer?.cancel();
   storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
   fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
