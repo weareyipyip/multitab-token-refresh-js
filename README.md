@@ -72,6 +72,19 @@ AuthApiClient.interceptors.request.use(axiosAuthRequestInterceptor);
 AuthApiClient.get("/very_secure_endpoint");
 ```
 
+### Extract expiry from JWTs
+
+You can use a helper function to extract the expiry from the tokens if they are JWTs:
+
+```javascript
+import {
+  TokenService,
+  fromJwt,
+} from "@weareyipyip/multitab-token-refresh";
+
+TokenService.updateStatus(fromJwt({ acccessToken, refreshToken }));
+```
+
 ## Integrate with Vuex
 
 Example for Vue/Vuex 2, but works for Vue/Vuex 3 as well. Will work across tabs.

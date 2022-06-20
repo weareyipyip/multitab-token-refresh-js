@@ -1,14 +1,9 @@
 "use strict";
 import { BroadcastChannel, createLeaderElection } from "broadcast-channel";
 import storage from "./storage";
+import { Tokens } from "./tokens";
 
 type refreshCallback = (refreshToken: string) => Promise<any>;
-type newTokens = {
-  accessToken: string;
-  accessTokenExp: number;
-  refreshToken: string;
-  refreshTokenExp: number;
-};
 type status = {
   accessToken: string;
   accessTokenExp: number;
@@ -108,7 +103,7 @@ function notifyStatusUpdate() {
  * Update the local status and notify subscribers.
  * Determines loggedIn status, creates a new status and stores it in LocalStorage.
  */
-function updateLocalStatus(newTokens: newTokens) {
+function updateLocalStatus(newTokens: Tokens) {
   let { refreshToken, refreshTokenExp, accessToken, accessTokenExp } =
     newTokens;
   const loggedIn = !!(refreshToken && ttl(refreshTokenExp) > 5);
@@ -228,7 +223,7 @@ function setRefreshCallback(refreshCallback: refreshCallback) {
  *
  * Updates local status, updates peer tab status and schedules the next refresh if tab leader.
  */
-async function updateStatus(newTokens: newTokens) {
+async function updateStatus(newTokens: Tokens) {
   updateLocalStatus(newTokens);
   fallbackAccessTokenPromiseResolver(newTokens.accessToken);
   scheduleRefreshIfLeader();
