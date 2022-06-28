@@ -9,7 +9,7 @@ export class Timer {
   private id?: NodeJS.Timeout;
 
   constructor(private callback: () => void, private ttlMs: number) {
-    if (ttlMs <= 0) throw new Error("TTL cannot be negative");
+    if (ttlMs < 0) throw new Error("TTL cannot be negative");
 
     this.schedule();
   }
