@@ -107,8 +107,8 @@ function notifyStatusUpdate() {
 function updateLocalStatus(newTokens: Tokens) {
   let { refreshToken, refreshTokenExp, accessToken, accessTokenExp } =
     newTokens;
-  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) > 5);
-  const accessValid = !!(accessToken && ttl(accessTokenExp) > 5);
+  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) > 10);
+  const accessValid = !!(accessToken && ttl(accessTokenExp) > 10);
   if (!accessValid) accessToken = "";
   let newStatus = { ...BASE_STATUS, ...newTokens, loggedIn, accessToken };
   const newStatusJSON = JSON.stringify(newStatus);
@@ -161,27 +161,33 @@ function handleLogoutMessage() {
 
 /**
  * Schedule a token refresh if this tab is the leader and currentStatus.loggedIn = true.
- * The refresh is scheduled 5 seconds before the access token expires.
+ * The refresh is scheduled 10 seconds before the access token expires.
  */
 function scheduleRefreshIfLeader() {
   refreshTimer?.cancel();
   if (elector.isLeader && currentStatus.loggedIn) {
-    const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - 5);
+    const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - 10);
     console.log(`Refresh scheduled in ${accessTTL} seconds`);
-    refreshTimer = new Timer(() => {
-      console.log("Refreshing session / tokens...");
-      refreshCallbackPromise.then((refreshCallback) => {
-        refreshCallback(currentStatus.refreshToken || "").catch((error) => {
-          console.log(
-            `Refresh failed ${
-              error.response ? ": " + JSON.stringify(error.response) : ""
-            }`
-          );
-          throw error;
-        });
-      });
-    }, Math.floor(accessTTL * 1000));
+    refreshTimer = new Timer(refreshNow, Math.floor(accessTTL * 1000));
   }
+}
+
+/**
+ * Refresh now.
+ */
+function refreshNow() {
+  console.log("Refreshing session / tokens...");
+  return refreshCallbackPromise.then((refreshCallback) => {
+    refreshTimer?.cancel();
+    refreshCallback(currentStatus.refreshToken || "").catch((error) => {
+      console.log(
+        `Refresh failed ${
+          error.response ? ": " + JSON.stringify(error.response) : ""
+        }`
+      );
+      throw error;
+    });
+  });
 }
 
 /////////////////////////
@@ -203,6 +209,7 @@ function ttl(timestamp: number) {
  * Returns a promise that will resolve to the access token.
  */
 async function getAccessToken() {
+  if (ttl(currentStatus.accessTokenExp) < 2) await refreshNow();
   return currentStatus.accessToken || fallbackAccessTokenPromise;
 }
 
