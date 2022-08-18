@@ -209,7 +209,6 @@ function ttl(timestamp: number) {
  * Returns a promise that will resolve to the access token.
  */
 async function getAccessToken() {
-  if (!currentStatus?.loggedIn) throw LOGGED_OUT_ERROR;
   if (ttl(currentStatus?.accessTokenExp) > 5) return currentStatus.accessToken;
   else return accessTokenPromise;
 }
