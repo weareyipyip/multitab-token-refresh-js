@@ -166,20 +166,20 @@ function handleLogoutMessage() {
  * The refresh is scheduled a few seconds before the access token expires.
  */
 function scheduleRefreshIfLeader() {
+  clearInterval(refreshInterval);
   if (elector.isLeader && currentStatus.loggedIn) {
-    const accessTTL = Math.max(
+    const refreshAfter = Math.max(
       0,
       ttl(currentStatus?.accessTokenExp) - REFRESH_TRESHOLD_TTL
     );
-    console.log(`Refresh scheduled in ${accessTTL} seconds`);
-    clearInterval(refreshInterval);
+    console.log(`Refresh scheduled in ${refreshAfter} seconds`);
     refreshInterval = setInterval(refreshWhenExpired, 1000);
   }
 }
 
 function refreshWhenExpired() {
   const accessTTL = ttl(currentStatus?.accessTokenExp);
-  if (accessTTL <= REFRESH_TRESHOLD_TTL) {
+  if (accessTTL < REFRESH_TRESHOLD_TTL) {
     console.log("Refreshing session / tokens...");
     return refreshCallbackPromise.then((refreshCallback) => {
       refreshCallback(currentStatus.refreshToken || "").catch((error) => {
