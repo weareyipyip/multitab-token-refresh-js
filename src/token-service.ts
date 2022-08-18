@@ -24,7 +24,8 @@ const BASE_STATUS: status = {
   refreshTokenExp: 0,
   loggedIn: false,
 };
-const MIN_TTL = 10;
+const REFRESH_TRESHOLD_TTL = 10;
+const MIN_TTL = 5;
 
 const authChannel = new BroadcastChannel("auth-channel", {
   webWorkerSupport: false,
@@ -107,8 +108,8 @@ function notifyStatusUpdate() {
 function updateLocalStatus(newTokens: Tokens) {
   let { refreshToken, refreshTokenExp, accessToken, accessTokenExp } =
     newTokens;
-  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) > 5);
-  const accessValid = !!(accessToken && ttl(accessTokenExp) > 5);
+  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) >= MIN_TTL);
+  const accessValid = !!(accessToken && ttl(accessTokenExp) >= MIN_TTL);
   if (!accessValid) accessToken = "";
   let newStatus = { ...BASE_STATUS, ...newTokens, loggedIn, accessToken };
   const newStatusJSON = JSON.stringify(newStatus);
@@ -166,7 +167,10 @@ function handleLogoutMessage() {
  */
 function scheduleRefreshIfLeader() {
   if (elector.isLeader && currentStatus.loggedIn) {
-    const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - MIN_TTL);
+    const accessTTL = Math.max(
+      0,
+      ttl(currentStatus?.accessTokenExp) - REFRESH_TRESHOLD_TTL
+    );
     console.log(`Refresh scheduled in ${accessTTL} seconds`);
     clearInterval(refreshInterval);
     refreshInterval = setInterval(refreshWhenExpired, 1000);
@@ -175,7 +179,7 @@ function scheduleRefreshIfLeader() {
 
 function refreshWhenExpired() {
   const accessTTL = ttl(currentStatus?.accessTokenExp);
-  if (accessTTL <= MIN_TTL) {
+  if (accessTTL <= REFRESH_TRESHOLD_TTL) {
     console.log("Refreshing session / tokens...");
     return refreshCallbackPromise.then((refreshCallback) => {
       refreshCallback(currentStatus.refreshToken || "").catch((error) => {
@@ -209,7 +213,8 @@ function ttl(timestamp: number) {
  * Returns a promise that will resolve to the access token.
  */
 async function getAccessToken() {
-  if (ttl(currentStatus?.accessTokenExp) > 5) return currentStatus.accessToken;
+  if (ttl(currentStatus?.accessTokenExp) >= MIN_TTL)
+    return currentStatus.accessToken;
   else return accessTokenPromise;
 }
 
