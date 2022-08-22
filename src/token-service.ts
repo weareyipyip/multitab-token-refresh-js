@@ -2,7 +2,6 @@
 import { BroadcastChannel, createLeaderElection } from "broadcast-channel";
 import storage from "./storage";
 import { Tokens } from "./tokens";
-import { Timer } from "./timer";
 
 type refreshCallback = (refreshToken: string) => Promise<any>;
 type status = {
@@ -25,15 +24,17 @@ const BASE_STATUS: status = {
   refreshTokenExp: 0,
   loggedIn: false,
 };
+const REFRESH_TRESHOLD_TTL = 10;
+const MIN_TTL = 5;
 
 const authChannel = new BroadcastChannel("auth-channel", {
   webWorkerSupport: false,
 });
 const elector = createLeaderElection(authChannel);
-let fallbackAccessTokenPromiseResolver: (accessToken: string) => void;
-let fallbackAccessTokenPromiseRejecter: (error: Error) => void;
-let fallbackAccessTokenPromise: Promise<string>;
-let refreshTimer: Timer | null = null;
+let accessTokenPromiseResolver: (accessToken: string) => void;
+let accessTokenPromiseRejecter: (error: Error) => void;
+let accessTokenPromise: Promise<string>;
+let refreshInterval: NodeJS.Timer | undefined;
 let currentStatus: status = BASE_STATUS;
 let currentStatusJSON: string = JSON.stringify(BASE_STATUS);
 let refreshCallbackPromiseResolver: (refreshCallback: refreshCallback) => void;
@@ -49,7 +50,7 @@ const statusSubscribers: Array<subscriber> = [];
 // Initialization //
 ////////////////////
 
-renewInitialAccessTokenPromise();
+renewaccessTokenPromise();
 
 // set the initial local status
 const storedStatus = storage.getItem(LOCAL_STORAGE_STATUS_KEY) || "{}";
@@ -107,8 +108,8 @@ function notifyStatusUpdate() {
 function updateLocalStatus(newTokens: Tokens) {
   let { refreshToken, refreshTokenExp, accessToken, accessTokenExp } =
     newTokens;
-  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) > 10);
-  const accessValid = !!(accessToken && ttl(accessTokenExp) > 10);
+  const loggedIn = !!(refreshToken && ttl(refreshTokenExp) >= MIN_TTL);
+  const accessValid = !!(accessToken && ttl(accessTokenExp) >= MIN_TTL);
   if (!accessValid) accessToken = "";
   let newStatus = { ...BASE_STATUS, ...newTokens, loggedIn, accessToken };
   const newStatusJSON = JSON.stringify(newStatus);
@@ -137,7 +138,8 @@ function handleStatusChangeMessage(message: string) {
     console.log("Received status update from peer tab");
     const status = JSON.parse(newStatusJSON || "{}");
     updateLocalStatus(status);
-    fallbackAccessTokenPromiseResolver(status.accessToken);
+    accessTokenPromiseResolver(status.accessToken);
+    renewaccessTokenPromise();
     scheduleRefreshIfLeader();
   }
 }
@@ -148,11 +150,11 @@ function handleStatusChangeMessage(message: string) {
  */
 function handleLogoutMessage() {
   console.log("Received logout message from peer tab, logging out.");
-  refreshTimer?.cancel();
+  clearInterval(refreshInterval);
   storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
-  fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
-  renewInitialAccessTokenPromise();
+  accessTokenPromiseRejecter(LOGGED_OUT_ERROR);
+  renewaccessTokenPromise();
 }
 
 ////////////////////////
@@ -161,33 +163,35 @@ function handleLogoutMessage() {
 
 /**
  * Schedule a token refresh if this tab is the leader and currentStatus.loggedIn = true.
- * The refresh is scheduled 10 seconds before the access token expires.
+ * The refresh is scheduled a few seconds before the access token expires.
  */
 function scheduleRefreshIfLeader() {
-  refreshTimer?.cancel();
   if (elector.isLeader && currentStatus.loggedIn) {
-    const accessTTL = Math.max(0, ttl(currentStatus?.accessTokenExp) - 10);
-    console.log(`Refresh scheduled in ${accessTTL} seconds`);
-    refreshTimer = new Timer(refreshNow, Math.floor(accessTTL * 1000));
+    const refreshAfter = Math.max(
+      0,
+      ttl(currentStatus?.accessTokenExp) - REFRESH_TRESHOLD_TTL
+    );
+    console.log(`Refresh scheduled in ${refreshAfter} seconds`);
+    refreshInterval = setInterval(refreshWhenExpired, 1000);
   }
 }
 
-/**
- * Refresh now.
- */
-function refreshNow() {
-  console.log("Refreshing session / tokens...");
-  return refreshCallbackPromise.then((refreshCallback) => {
-    refreshTimer?.cancel();
-    refreshCallback(currentStatus.refreshToken || "").catch((error) => {
-      console.log(
-        `Refresh failed ${
-          error.response ? ": " + JSON.stringify(error.response) : ""
-        }`
-      );
-      throw error;
+function refreshWhenExpired() {
+  const accessTTL = ttl(currentStatus?.accessTokenExp);
+  if (accessTTL < REFRESH_TRESHOLD_TTL) {
+    console.log("Refreshing session / tokens...");
+    clearInterval(refreshInterval);
+    return refreshCallbackPromise.then((refreshCallback) => {
+      refreshCallback(currentStatus.refreshToken || "").catch((error) => {
+        console.log(
+          `Refresh failed ${
+            error.response ? ": " + JSON.stringify(error.response) : ""
+          }`
+        );
+        throw error;
+      });
     });
-  });
+  }
 }
 
 /////////////////////////
@@ -209,8 +213,9 @@ function ttl(timestamp: number) {
  * Returns a promise that will resolve to the access token.
  */
 async function getAccessToken() {
-  if (ttl(currentStatus.accessTokenExp) < 2) await refreshNow();
-  return currentStatus.accessToken || fallbackAccessTokenPromise;
+  if (ttl(currentStatus?.accessTokenExp) >= MIN_TTL)
+    return currentStatus.accessToken;
+  else return accessTokenPromise;
 }
 
 /////////////
@@ -233,7 +238,8 @@ function setRefreshCallback(refreshCallback: refreshCallback) {
  */
 async function updateStatus(newTokens: Tokens) {
   updateLocalStatus(newTokens);
-  fallbackAccessTokenPromiseResolver(newTokens.accessToken);
+  accessTokenPromiseResolver(newTokens.accessToken);
+  renewaccessTokenPromise();
   scheduleRefreshIfLeader();
   authChannel.postMessage(`${MSG_STATUS_CHANGE} : ${currentStatusJSON}`);
 }
@@ -242,20 +248,20 @@ async function updateStatus(newTokens: Tokens) {
  * Logout this tab, cancel scheduled refreshes and notify peer tabs.
  */
 function setLoggedOut() {
-  refreshTimer?.cancel();
+  clearInterval(refreshInterval);
   storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
   updateLocalStatus(BASE_STATUS);
-  fallbackAccessTokenPromiseRejecter(LOGGED_OUT_ERROR);
-  renewInitialAccessTokenPromise();
+  accessTokenPromiseRejecter(LOGGED_OUT_ERROR);
+  renewaccessTokenPromise();
   authChannel.postMessage(MSG_LOGOUT);
 }
 
-function renewInitialAccessTokenPromise() {
-  fallbackAccessTokenPromise = new Promise(function (resolve, reject) {
-    fallbackAccessTokenPromiseResolver = resolve;
-    fallbackAccessTokenPromiseRejecter = reject;
+function renewaccessTokenPromise() {
+  accessTokenPromise = new Promise(function (resolve, reject) {
+    accessTokenPromiseResolver = resolve;
+    accessTokenPromiseRejecter = reject;
   });
-  fallbackAccessTokenPromise.catch(() => {});
+  accessTokenPromise.catch(() => {});
 }
 
 export default {
