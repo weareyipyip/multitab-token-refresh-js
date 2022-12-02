@@ -1,5 +1,5 @@
 "use strict";
-import TokenService, { status } from "./token-service";
+import TokenService, { Status } from "./token-service";
 
 /**
  * Vuex plugin to get TokenService status updates.
@@ -8,7 +8,7 @@ import TokenService, { status } from "./token-service";
  */
 function createVuexPlugin(statusUpdateMutationName: string) {
   return (store: any) => {
-    TokenService.subscribeStatusUpdates((status: status) => {
+    TokenService.subscribeStatusUpdates((status: Status) => {
       store.commit(statusUpdateMutationName, { ...status });
     });
   };
