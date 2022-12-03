@@ -30,6 +30,6 @@
     "typescript": "^4.6.4"
   },
   "dependencies": {
-    "broadcast-channel": "^4.11.0"
+    "broadcast-channel": "^4.0.0"
   }
 }

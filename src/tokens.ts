@@ -7,7 +7,7 @@ export interface Tokens {
   refreshTokenExp: number;
 }
 
-type FromJwtInput = {
+interface FromJwtInput {
   /**
    * JWT access token.
    */
@@ -34,12 +34,19 @@ type FromJwtInput = {
  *
  * @throws If no expiry override is set and not `exp` claim is found in the tokens.
  */
-export function fromJwt({ accessToken, accessTokenExp, refreshToken, refreshTokenExp }: FromJwtInput): Tokens {
+export function fromJwt({
+  accessToken,
+  accessTokenExp,
+  refreshToken,
+  refreshTokenExp,
+}: FromJwtInput): Tokens {
   accessTokenExp ??= peekPayload(accessToken).exp;
-  if (!accessTokenExp) throw new Error("No expiry found for access token");
+  if (accessTokenExp == null)
+    throw new Error("No expiry found for access token");
 
   refreshTokenExp ??= peekPayload(refreshToken).exp;
-  if (!refreshTokenExp) throw new Error("No expiry found for refresh token");
+  if (refreshTokenExp == null)
+    throw new Error("No expiry found for refresh token");
 
   return { accessToken, accessTokenExp, refreshToken, refreshTokenExp };
 }

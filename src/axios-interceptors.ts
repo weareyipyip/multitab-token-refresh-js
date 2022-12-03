@@ -4,7 +4,9 @@ import TokenService from "./token-service";
 /**
  * Request interceptor for Axios, allowing it to make authenticated API requests.
  */
-async function axiosAuthRequestInterceptor(config: any) {
+async function axiosAuthRequestInterceptor(
+  config: any
+): Promise<{ headers: { authorization: string } }> {
   const token = await TokenService.getAccessToken();
   config.headers.authorization = `Bearer ${token}`;
   return config;
