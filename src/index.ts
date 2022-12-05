@@ -1,15 +1,16 @@
 "use strict";
-import TokenService from "./token-service";
+import { TokenService, RefreshCallback } from "./token-service";
 import createVuexPlugin from "./vuex-plugin";
-import { axiosAuthRequestInterceptor } from "./axios-interceptors";
+import { createAxiosAuthRequestInterceptor } from "./axios-interceptors";
 import { fromJwt, Tokens } from "./tokens";
 import { subscribeToPeerTabUpdates } from "./cross-tab-status-updates";
+import { LocalStorageCompatible } from "./storage";
 
 export {
   TokenService,
   fromJwt,
   createVuexPlugin,
-  axiosAuthRequestInterceptor,
+  createAxiosAuthRequestInterceptor,
   subscribeToPeerTabUpdates,
 };
-export type { Tokens };
+export type { Tokens, RefreshCallback, LocalStorageCompatible };

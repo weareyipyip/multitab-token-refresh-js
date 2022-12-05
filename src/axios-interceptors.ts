@@ -1,15 +1,14 @@
 "use strict";
-import TokenService from "./token-service";
+import { TokenService } from "./token-service";
 
-/**
- * Request interceptor for Axios, allowing it to make authenticated API requests.
- */
-async function axiosAuthRequestInterceptor(
-  config: any
-): Promise<{ headers: { authorization: string } }> {
-  const token = await TokenService.getAccessToken();
-  config.headers.authorization = `Bearer ${token}`;
-  return config;
+function createAxiosAuthRequestInterceptor(
+  tokenService: TokenService
+): (config: any) => Promise<{ headers: { authorization: string } }> {
+  return async (config: any) => {
+    const token = await tokenService.getAccessToken();
+    config.headers.authorization = `Bearer ${token}`;
+    return config;
+  };
 }
 
-export { axiosAuthRequestInterceptor };
+export { createAxiosAuthRequestInterceptor };
