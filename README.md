@@ -3,11 +3,11 @@
 When using single-use refresh tokens with multiple browser tabs,
 a race condition between tabs may occur when it's time to refresh.
 
-This little service solves this problem by having one "leader" tab that
-is responsible for renewing the tokens when it's time to do so,
-and distributing the new tokens to its peers.
+This little package solves this problem by using the [Web Locks API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API) to synchronize requests for an access token, from multiple browser tabs.
+If the access token needs refreshing, it is refreshed while the lock is held.
+This ensures that a refresh token is only used once.
 
-Additionally, it can provide updates about login status to Redux or Vuex, for example.
+Additionally, this package can provide updates on login/logout events to peer tabs, so that they may transition to an appropriate state.
 
 ## Setup
 
@@ -19,27 +19,12 @@ import Axios from "axios";
 import {
   TokenService,
   axiosAuthRequestInterceptor,
+  fromJwt,
+  Tokens,
 } from "@weareyipyip/multitab-token-refresh";
 
 // ApiClient will be used for requests that don't require an access token
 const ApiClient = Axios.create();
-
-// you need to process your own login/refresh responses and notify the TokenService about the new tokens
-function onAuthSuccess(authResponse) {
-  let { accessToken, refreshToken } = authResponse.data;
-  let accessPayload = parseJWT(accessToken);
-  let refreshPayload = parseJWT(refreshToken);
-
-  TokenService.updateStatus({
-    accessToken,
-    refreshToken,
-    accessTokenExp: accessPayload.exp,
-    refreshTokenExp: refreshPayload.exp,
-  });
-
-  // return the original response so that your application code can use it
-  return authResponse;
-}
 
 // on login/refresh failure, notify the TokenService that we are logged out
 function onAuthFailure(authError) {
@@ -48,41 +33,66 @@ function onAuthFailure(authError) {
   throw authError;
 }
 
-// your login function
-function login(username, password) {
-  return ApiClient.post("/login", { username, password })
-    .then(onAuthSuccess)
-    .catch(onAuthFailure);
+// you need to process your own login/refresh response body format and create a new Tokens object from it
+// you can use the fromJwt helper function to do so
+function authResponseToTokens(resp) {
+  const {
+    data: { access, refresh },
+  } = resp;
+  const tokens = fromJwt({ accessToken: access, refreshToken: refresh });
+  return tokens;
 }
 
-// you must provide a refresh callback to the TokenService so that it knows how to refresh your tokens
-TokenService.setRefreshCallback((refreshToken) => {
+// define a function that can refresh tokens based on a refreshToken and returns a new Tokens object on success
+function refreshTokens(refreshToken) {
   return ApiClient.post("/refresh", null, {
     headers: { authorization: `Bearer ${refreshToken}` },
   })
-    .then(onAuthSuccess)
+    .then(authResponseToTokens)
     .catch(onAuthFailure);
-});
+}
+
+// provide that function to the TokenService so that it knows how to refresh your tokens
+TokenService.setRefreshCallback(refreshTokens);
+
+// on login, your need to notify the TokenService of the new status
+function onLogin(response) {
+  TokenService.setStatus(authResponseToTokens(response));
+  return response;
+}
+
+// your login function
+function login(username, password) {
+  return ApiClient.post("/login", { username, password })
+    .then(onLogin)
+    .catch(onAuthFailure);
+}
 
 // AuthApiClient will be used for all requests that require an access token
 const AuthApiClient = Axios.create();
 AuthApiClient.interceptors.request.use(axiosAuthRequestInterceptor);
 
+// on logout, notify the TokenService (regardless of success)
+function logout() {
+  return AuthApiClient.post("/logout")
+    .then(TokenService.setLoggedOut)
+    .catch(TokenService.setLoggedOut);
+}
+
 // now you're good to go
 AuthApiClient.get("/very_secure_endpoint");
 ```
 
-### Extract expiry from JWTs
+## Reload peer tabs on login/logout
 
-You can use a helper function to extract the expiry from the tokens if they are JWTs:
+If you want all browser tabs of your application to reflect logged-in or logged-out status,
+you can force a reload of peer tabs using `subscribeToPeerTabUpdates`.
+This opt-in behavior can be enabled by simply calling this function anywhere during initialization,
+for example after setting the refresh callback:
 
 ```javascript
-import {
-  TokenService,
-  fromJwt,
-} from "@weareyipyip/multitab-token-refresh";
-
-TokenService.updateStatus(fromJwt({ acccessToken, refreshToken }));
+TokenService.setRefreshCallback(refreshTokens);
+subscribeToPeerTabUpdates();
 ```
 
 ## Integrate with Vuex
