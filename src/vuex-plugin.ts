@@ -1,5 +1,5 @@
 "use strict";
-import TokenService, { Status } from "./token-service";
+import { TokenService, Status } from "./token-service";
 
 /**
  * Vuex plugin to get TokenService status updates.

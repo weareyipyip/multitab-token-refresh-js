@@ -1,4 +1,4 @@
-import TokenService from "./token-service";
+import { TokenService } from "./token-service";
 import { BroadcastChannel } from "broadcast-channel";
 
 const CHANNEL_NAME = "multitab-token-refresh-channel";

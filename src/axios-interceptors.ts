@@ -1,5 +1,5 @@
 "use strict";
-import TokenService from "./token-service";
+import { TokenService } from "./token-service";
 
 function createAxiosAuthRequestInterceptor(
   tokenService: TokenService

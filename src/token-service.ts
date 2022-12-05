@@ -277,5 +277,5 @@ function createNewStatus(tokensOrStatus: Tokens | Status): Status {
 // Exports //
 /////////////
 
-export default TokenService;
-export type { Status };
+export { TokenService };
+export type { Status, RefreshCallback };
