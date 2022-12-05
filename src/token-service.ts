@@ -1,13 +1,16 @@
 "use strict";
 import { Mutex } from "async-mutex";
-import storage from "./storage";
+import { LocalStorageCompatible } from "./storage";
 import { Tokens } from "./tokens";
 
 ///////////
 // Types //
 ///////////
 
-type RefreshCallback = (refreshToken: string) => Promise<Tokens>;
+type RefreshCallback = (
+  refreshToken: string,
+  setLoggedOut: () => void
+) => Promise<Tokens>;
 interface Status {
   accessToken: string;
   accessTokenExp: number;
@@ -35,81 +38,189 @@ const BASE_STATUS: Status = {
 };
 
 const MIN_TOKEN_TTL = 5;
+const supportsWebLocksApi = !!(
+  typeof navigator !== "undefined" && navigator.locks?.request
+);
 
-let refreshCallbackPromiseResolver: (refreshCallback: RefreshCallback) => void;
-const refreshCallbackPromise: Promise<RefreshCallback> = new Promise(function (
-  resolve,
-  _reject
-) {
-  refreshCallbackPromiseResolver = resolve;
-});
-const statusSubscribers: Subscriber[] = [];
-const supportsWebLocksApi = !!navigator?.locks?.request;
-const mutex = new Mutex();
+class TokenService {
+  /**
+   * Token handling service. Must be initiated with an async refresh callback.
+   *
+   * Optionally, the storage mechanism (default LocalStorage),
+   * mutex lock name and storage key can be overridden.
+   */
+  private refreshCallback: RefreshCallback;
+  private storage: LocalStorageCompatible;
+  private statusSubscribers: Subscriber[] = [];
+  private mutex = new Mutex();
+  private lockName: string;
+  private storageKey: string;
 
-////////////
-// Status //
-////////////
+  public constructor(
+    refreshCallback: RefreshCallback,
+    options: {
+      storage?: LocalStorageCompatible;
+      lockName?: string;
+      storageKey?: string;
+    } = {}
+  ) {
+    this.refreshCallback = refreshCallback;
+    this.storage = options.storage || localStorage;
+    this.lockName = options.lockName || GET_TOKEN_LOCK;
+    this.storageKey = options.storageKey || LOCAL_STORAGE_STATUS_KEY;
+  }
 
-/**
- * Get the current status from LocalStorage, deserialized and with updated `loggedIn` and `accessTokenValid` fields.
- */
-function getStatus(): Status {
-  let serializedStatus = storage.getItem(LOCAL_STORAGE_STATUS_KEY);
-  serializedStatus = serializedStatus == null ? "{}" : serializedStatus;
-  const status = createNewStatus(JSON.parse(serializedStatus));
-  return status;
-}
+  ////////////
+  // Status //
+  ////////////
 
-/**
- * Save a status to LocalStorage.
- */
-function saveStatus(status: Status): void {
-  storage.setItem(LOCAL_STORAGE_STATUS_KEY, JSON.stringify(status));
-  console.log("New auth status stored.");
-}
+  /**
+   * Get the current status from storage, deserialized and with updated `loggedIn` and `accessTokenValid` fields.
+   */
+  public getStatus(): Status {
+    let serializedStatus = this.storage.getItem(this.storageKey);
+    serializedStatus = serializedStatus == null ? "{}" : serializedStatus;
+    const status = createNewStatus(JSON.parse(serializedStatus));
+    return status;
+  }
 
-/**
- * Delete the current status in LocalStorage
- */
-function deleteStatus(): void {
-  storage.removeItem(LOCAL_STORAGE_STATUS_KEY);
-}
+  /**
+   * Save a status to storage.
+   */
+  private saveStatus(status: Status): void {
+    this.storage.setItem(this.storageKey, JSON.stringify(status));
+    console.log("New auth status stored.");
+  }
 
-/**
- * Save a status to LocalStorage and notify subscribers of the new status.
- */
-function saveAndPublishStatus(status: Status): void {
-  saveStatus(status);
-  notifyStatusUpdate();
-}
+  /**
+   * Delete the current status in storage
+   */
+  private deleteStatus(): void {
+    this.storage.removeItem(this.storageKey);
+  }
 
-//////////////
-// "PubSub" //
-//////////////
+  /**
+   * Save a status to storage and notify subscribers of the new status.
+   */
+  private saveAndPublishStatus(status: Status): void {
+    this.saveStatus(status);
+    this.notifyStatusUpdate();
+  }
 
-/**
- * Register a subscriber to receive status updates.
- */
-function subscribeStatusUpdates(subscriber: Subscriber): void {
-  statusSubscribers.push(subscriber);
-  sendCurrentStatus(subscriber);
-}
+  //////////////
+  // "PubSub" //
+  //////////////
 
-/**
- * Send the current status to a single subscriber
- */
-function sendCurrentStatus(subscriber: Subscriber, status?: Status): void {
-  status = status ?? getStatus();
-  subscriber(status);
-}
+  /**
+   * Register a subscriber to receive status updates.
+   */
+  public subscribeStatusUpdates(subscriber: Subscriber): void {
+    this.statusSubscribers.push(subscriber);
+    this.sendCurrentStatus(subscriber);
+  }
 
-/**
- * Notify registered subscribers of status updates.
- */
-function notifyStatusUpdate(): void {
-  const status = getStatus();
-  statusSubscribers.forEach((sub) => sendCurrentStatus(sub, status));
+  /**
+   * Send the current status to a single subscriber
+   */
+  private sendCurrentStatus(subscriber: Subscriber, status?: Status): void {
+    status = status ?? this.getStatus();
+    subscriber(status);
+  }
+
+  /**
+   * Notify registered subscribers of status updates.
+   */
+  private notifyStatusUpdate(): void {
+    const status = this.getStatus();
+    this.statusSubscribers.forEach((sub) =>
+      this.sendCurrentStatus(sub, status)
+    );
+  }
+
+  ////////////////////////////
+  // The actual token stuff //
+  ////////////////////////////
+
+  /**
+   * Returns a promise that will resolve to the access token.
+   * Refreshes the tokens if necessary.
+   * Access is synchronized across tabs in browsers that support the Web Locks API.
+   */
+  public async getAccessToken(): Promise<string> {
+    return supportsWebLocksApi
+      ? navigator.locks.request(this.lockName, () =>
+          this.getAccessTokenNonSynchronized()
+        )
+      : this.mutex.runExclusive(() => this.getAccessTokenNonSynchronized());
+  }
+
+  /**
+   * Get an access token in a promise, if we are logged-in.
+   */
+  private async getAccessTokenNonSynchronized(): Promise<string> {
+    const currentStatus = this.getStatus();
+    if (currentStatus.accessTokenValid) {
+      return currentStatus.accessToken;
+    } else {
+      await this.refresh();
+      return await this.getAccessTokenNonSynchronized();
+    }
+  }
+
+  /**
+   * Refresh the tokens right now, if we are logged-in.
+   * If the refresh callback fails, we consider the session to be logged-out.
+   */
+  private async refresh(): Promise<void> {
+    const currentStatus = this.getStatus();
+    if (!currentStatus.loggedIn) throw LOGGED_OUT_ERROR;
+    console.log("Refreshing tokens...");
+
+    return await this.refreshCallback(
+      currentStatus.refreshToken,
+      this.setLoggedOut.bind(this)
+    )
+      .then((tokens: Tokens) => {
+        const newStatus = createNewStatus(tokens);
+        this.saveAndPublishStatus(newStatus);
+      })
+      .catch((error: { response?: object }) => {
+        let resp =
+          error.response != null ? ": " + JSON.stringify(error.response) : "";
+        console.log(`Refresh failed ${resp}`);
+        throw LOGGED_OUT_ERROR;
+      });
+  }
+
+  /////////////
+  // SETTERS //
+  /////////////
+
+  /**
+   * Update the status of the TokenService with a new set of tokens. To be used after login.
+   */
+  public setStatus({
+    accessToken,
+    accessTokenExp,
+    refreshToken,
+    refreshTokenExp,
+  }: Tokens): void {
+    const newStatus = createNewStatus({
+      accessToken,
+      accessTokenExp,
+      refreshToken,
+      refreshTokenExp,
+    });
+    this.saveAndPublishStatus(newStatus);
+  }
+
+  /**
+   * Update the status of the TokenService to a logged-out state.
+   */
+  public setLoggedOut(): void {
+    this.deleteStatus();
+    this.notifyStatusUpdate();
+  }
 }
 
 /////////////////////////
@@ -162,107 +273,9 @@ function createNewStatus(tokensOrStatus: Tokens | Status): Status {
   return status;
 }
 
-////////////////////////////
-// The actual token stuff //
-////////////////////////////
-
-/**
- * Returns a promise that will resolve to the access token.
- * Refreshes the tokens if necessary.
- * Access is synchronized across tabs in browsers that support the Web Locks API.
- */
-async function getAccessToken(): Promise<string> {
-  return supportsWebLocksApi
-    ? navigator.locks.request(GET_TOKEN_LOCK, getAccessTokenNonSynchronized)
-    : mutex.runExclusive(getAccessTokenNonSynchronized);
-}
-
-/**
- * Get an access token in a promise, if we are logged-in.
- */
-async function getAccessTokenNonSynchronized(): Promise<string> {
-  const currentStatus = getStatus();
-  if (currentStatus.accessTokenValid) {
-    return currentStatus.accessToken;
-  } else {
-    await refresh();
-    return await getAccessTokenNonSynchronized();
-  }
-}
-
-/**
- * Refresh the tokens right now, if we are logged-in.
- */
-async function refresh(): Promise<void> {
-  const currentStatus = getStatus();
-  if (!currentStatus.loggedIn) throw LOGGED_OUT_ERROR;
-  console.log("Refreshing tokens...");
-  const refreshCallback = await refreshCallbackPromise;
-
-  return await refreshCallback(currentStatus.refreshToken)
-    .then((tokens: Tokens) => {
-      const newStatus = createNewStatus(tokens);
-      saveAndPublishStatus(newStatus);
-    })
-    .catch((error: { response?: object }) => {
-      console.log(
-        `Refresh failed ${
-          error.response != null ? ": " + JSON.stringify(error.response) : ""
-        }`
-      );
-      throw LOGGED_OUT_ERROR;
-    });
-}
-
-/////////////
-// SETTERS //
-/////////////
-
-/**
- * Set the httpRefresh callback, a function that will be called with the refresh token
- * when the access token has almost expired.
- */
-function setRefreshCallback(refreshCallback: RefreshCallback): void {
-  refreshCallbackPromiseResolver(refreshCallback);
-}
-
-/**
- * Update the status of the TokenService with a new set of tokens. To be used after login.
- */
-function setStatus({
-  accessToken,
-  accessTokenExp,
-  refreshToken,
-  refreshTokenExp,
-}: Tokens): void {
-  saveAndPublishStatus(
-    createNewStatus({
-      accessToken,
-      accessTokenExp,
-      refreshToken,
-      refreshTokenExp,
-    })
-  );
-}
-
-/**
- * Update the status of the TokenService to a logged-out state.
- */
-function setLoggedOut(): void {
-  deleteStatus();
-  notifyStatusUpdate();
-}
-
 /////////////
 // Exports //
 /////////////
 
-export default {
-  getAccessToken,
-  setStatus,
-  setRefreshCallback,
-  setLoggedOut,
-  subscribeStatusUpdates,
-  getStatus,
-};
+export default TokenService;
 export type { Status };
