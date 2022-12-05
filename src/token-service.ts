@@ -1,4 +1,5 @@
 "use strict";
+import { Mutex } from "async-mutex";
 import storage from "./storage";
 import { Tokens } from "./tokens";
 
@@ -43,6 +44,8 @@ const refreshCallbackPromise: Promise<RefreshCallback> = new Promise(function (
   refreshCallbackPromiseResolver = resolve;
 });
 const statusSubscribers: Subscriber[] = [];
+const supportsWebLocksApi = !!navigator?.locks?.request;
+const mutex = new Mutex();
 
 ////////////
 // Status //
@@ -166,10 +169,12 @@ function createNewStatus(tokensOrStatus: Tokens | Status): Status {
 /**
  * Returns a promise that will resolve to the access token.
  * Refreshes the tokens if necessary.
- * Access is synchronized across tabs.
+ * Access is synchronized across tabs in browsers that support the Web Locks API.
  */
 async function getAccessToken(): Promise<string> {
-  return navigator.locks.request(GET_TOKEN_LOCK, getAccessTokenNonSynchronized);
+  return supportsWebLocksApi
+    ? navigator.locks.request(GET_TOKEN_LOCK, getAccessTokenNonSynchronized)
+    : mutex.runExclusive(getAccessTokenNonSynchronized);
 }
 
 /**
