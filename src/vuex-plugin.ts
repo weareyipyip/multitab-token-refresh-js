@@ -1,16 +1,19 @@
 "use strict";
-import TokenService, { status } from "./token-service";
+import { TokenService, Status } from "./token-service";
 
 /**
  * Vuex plugin to get TokenService status updates.
  * Your Vuex store must define a mutation to receive the update,
  * you can specify the mutation name when creating the store plugin.
  */
-function createVuexPlugin(statusUpdateMutationName: string) {
+function createVuexPlugin(
+  tokenService: TokenService,
+  statusUpdateMutationName: string
+) {
   return (store: any) => {
-    TokenService.subscribeStatusUpdates((status: status) => {
-      store.commit(statusUpdateMutationName, { ...status });
-    });
+    tokenService.subscribeStatusUpdates((status: Status) =>
+      store.commit(statusUpdateMutationName, { ...status })
+    );
   };
 }
 
